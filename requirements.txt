@@ -1,4 +1,5 @@
 python-telegram-bot==22.8
 python-dotenv==1.2.4
 tzdata==2026.6
+psycopg[binary]>=3.3,<4
 

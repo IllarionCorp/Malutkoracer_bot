@@ -7,7 +7,7 @@ from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from .config import Settings
-from .service import BookingService, money, normalize_plate, parse_price
+from .service import BookingService, money, normalize_map_url, normalize_plate, parse_price
 from .storage import Availability, Booking, BookingError, Participant
 
 
@@ -57,7 +57,8 @@ class TrackBot:
     def main_keyboard(self, user_id: int) -> Keyboard:
         rows = [[Button("Забронировать трек", callback_data="book:0")],
                 [Button("Места и участники", callback_data="schedule:0")],
-                [Button("Мои брони", callback_data="my:0")]]
+                [Button("Мои брони", callback_data="my:0")],
+                [Button("Правила", callback_data="rules"), Button("Схема проезда", callback_data="directions")]]
         if self.is_admin(user_id):
             rows.append([Button("Управление треком", callback_data="admin:menu")])
         return Keyboard(rows)
@@ -85,6 +86,7 @@ class TrackBot:
 
     async def help(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = ("/book — забронировать трек\n/schedule — места и участники\n"
+                "/rules — правила посещения\n/directions — схема проезда\n"
                 "/my — мои брони и отмена\n/cancel — прервать ввод\n"
                 "/id — мой Telegram ID\n\nБронь оформляется на целое число часов. "
                 "Стоимость равна цене часа, умноженной на длительность. "
@@ -112,6 +114,28 @@ class TrackBot:
     async def schedule_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         context.user_data.pop("flow", None)
         await self.show_dates(update.message, 0, public=True)
+
+    async def rules_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self.show_rules(update.message)
+
+    async def directions_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await self.show_directions(update.message)
+
+    async def show_rules(self, message: Message) -> None:
+        rules = self.store.track_info().rules_text
+        text = "Правила посещения\n\n" + rules if rules else "Правила посещения пока не опубликованы. Уточни их у администратора."
+        await message.reply_text(text, reply_markup=Keyboard([[Button("В меню", callback_data="home")]]))
+
+    async def show_directions(self, message: Message) -> None:
+        url = self.store.track_info().directions_url
+        rows = []
+        if url:
+            text = f"Схема проезда — {self.settings.track_name}\n\nОткрой Яндекс Карты, чтобы посмотреть расположение трека и маршрут."
+            rows.append([Button("Открыть Яндекс Карты", url=url)])
+        else:
+            text = "Схема проезда пока не опубликована. Уточни адрес у администратора."
+        rows.append([Button("В меню", callback_data="home")])
+        await message.reply_text(text, reply_markup=Keyboard(rows))
 
     async def admin_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not self.is_admin(update.effective_user.id):
@@ -245,6 +269,8 @@ class TrackBot:
             [Button("Добавить окно записи", callback_data="admin:add")],
             [Button("Окна записи", callback_data="admin:slots:0")],
             [Button("Все брони", callback_data="admin:bookings:0")],
+            [Button("Изменить правила", callback_data="admin:rules")],
+            [Button("Изменить схему проезда", callback_data="admin:directions")],
             [Button("В главное меню", callback_data="home")],
         ]))
 
@@ -276,6 +302,24 @@ class TrackBot:
             if flow["stage"].startswith("admin_") and not self.is_admin(update.effective_user.id):
                 raise BookingError("Это действие доступно администратору.")
             match flow["stage"]:
+                case "admin_rules":
+                    rules = text.strip()
+                    if not 1 <= len(rules) <= 3500:
+                        raise BookingError("Отправь правила одним текстовым сообщением: от 1 до 3500 символов.")
+                    self.store.set_rules(rules)
+                    context.user_data.pop("flow", None)
+                    await update.message.reply_text("Правила сохранены и доступны пользователям.", reply_markup=Keyboard([
+                        [Button("Посмотреть правила", callback_data="rules")],
+                        [Button("Управление", callback_data="admin:menu")],
+                    ]))
+                case "admin_directions":
+                    url = normalize_map_url(text)
+                    self.store.set_directions(url)
+                    context.user_data.pop("flow", None)
+                    await update.message.reply_text("Схема проезда сохранена и доступна пользователям.", reply_markup=Keyboard([
+                        [Button("Открыть Яндекс Карты", url=url)],
+                        [Button("Управление", callback_data="admin:menu")],
+                    ]))
                 case "admin_day":
                     flow["day"] = self.service.parse_day(text)
                     flow["stage"] = "admin_time"
@@ -338,6 +382,10 @@ class TrackBot:
             if data == "home":
                 context.user_data.pop("flow", None)
                 await message.reply_text("Выбери действие:", reply_markup=self.main_keyboard(user.id))
+            elif data == "rules":
+                await self.show_rules(message)
+            elif data == "directions":
+                await self.show_directions(message)
             elif data.startswith("book:"):
                 context.user_data.pop("flow", None)
                 await self.show_dates(message, max(0, int(data.split(":")[1])))
@@ -418,6 +466,22 @@ class TrackBot:
         match action:
             case "menu":
                 await self.show_admin(message)
+            case "rules":
+                self.new_flow(context, "admin_rules")
+                current = self.store.track_info().rules_text
+                text = ("Текущие правила:\n\n" + current + "\n\n" if current else "")
+                await message.reply_text(
+                    text + "Отправь новый текст правил одним сообщением (до 3500 символов). Я сохраню его сразу.\n\n/cancel — отменить изменение.",
+                    reply_markup=Keyboard([[Button("Отмена", callback_data="admin:menu")]]),
+                )
+            case "directions":
+                self.new_flow(context, "admin_directions")
+                current = self.store.track_info().directions_url
+                text = ("Текущая ссылка:\n" + current + "\n\n" if current else "")
+                await message.reply_text(
+                    text + "Открой нужное место или маршрут в Яндекс Картах, выбери «Поделиться» и отправь скопированную ссылку одним сообщением.\n\n/cancel — отменить изменение.",
+                    reply_markup=Keyboard([[Button("Отмена", callback_data="admin:menu")]]),
+                )
             case "add":
                 await self.begin_window(message, context)
             case "bookings":
@@ -470,6 +534,7 @@ async def post_init(application: Application) -> None:
     await application.bot.set_my_commands([
         BotCommand("start", "Главное меню"), BotCommand("book", "Забронировать трек"),
         BotCommand("schedule", "Свободные места и участники"),
+        BotCommand("rules", "Правила посещения"), BotCommand("directions", "Схема проезда"),
         BotCommand("my", "Мои брони"), BotCommand("cancel", "Прервать ввод"),
         BotCommand("id", "Мой Telegram ID"), BotCommand("help", "Помощь"),
     ])
@@ -482,6 +547,7 @@ def build_application(settings: Settings, service: BookingService) -> Applicatio
         "start": handlers.start, "help": handlers.help, "id": handlers.identity,
         "cancel": handlers.abort, "book": handlers.book_command, "my": handlers.my_command,
         "schedule": handlers.schedule_command,
+        "rules": handlers.rules_command, "directions": handlers.directions_command,
         "admin": handlers.admin_command, "addslot": handlers.add_command, "slots": handlers.slots_command,
     }
     for command, handler in commands.items():

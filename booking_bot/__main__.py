@@ -1,27 +1,46 @@
 import argparse
 import asyncio
 import logging
+from pathlib import Path
+import sqlite3
+
+import psycopg
 
 from telegram.error import TelegramError
 
 from .config import Settings
 from .handlers import build_application
+from .migration import migrate_sqlite
 from .service import BookingService
 from .storage import BookingStore
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Telegram-бот бронирования гоночного трека")
-    parser.add_argument("--check", action="store_true", help="Проверить настройки и SQLite без обращения к Telegram")
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--check", action="store_true", help="Проверить настройки и PostgreSQL без обращения к Telegram")
+    actions.add_argument("--migrate-sqlite", type=Path, metavar="PATH", help="Перенести SQLite в пустую PostgreSQL и выйти")
     args = parser.parse_args()
     try:
-        settings = Settings.from_env(require_token=not args.check)
+        settings = Settings.from_env(require_token=not (args.check or args.migrate_sqlite is not None))
     except ValueError as error:
         parser.exit(1, f"Ошибка настройки: {error}\n")
-    store = BookingStore(settings.database_path)
-    store.initialize()
+    store = BookingStore(settings.database_url)
+    try:
+        if args.migrate_sqlite is not None:
+            counts = migrate_sqlite(store, args.migrate_sqlite)
+            print(f"Перенос в PostgreSQL завершён. Окон: {counts['availability']}, броней: {counts['bookings']}, "
+                  f"настроек трека: {counts['track_info']}. Файл SQLite сохранён.")
+            return
+        store.initialize()
+    except psycopg.Error as error:
+        parser.exit(1, f"Ошибка PostgreSQL ({type(error).__name__}). Проверь DATABASE_URL, доступность базы и права пользователя.\n")
+    except (OSError, sqlite3.Error) as error:
+        parser.exit(1, f"Не удалось прочитать SQLite ({type(error).__name__}). Проверь файл источника.\n")
+    except ValueError as error:
+        parser.exit(1, f"Ошибка переноса: {error}\n")
     if args.check:
-        print(f"Настройки и SQLite: OK. Часовой пояс: {settings.timezone.key}.")
+        print(f"Настройки и PostgreSQL: OK. Часовой пояс: {settings.timezone.key}.")
         print("BOT_TOKEN: " + ("задан (не проверялся в Telegram)" if settings.token else "нужно заполнить .env"))
         print(f"Администраторов: {len(settings.admin_ids)}.")
         return
