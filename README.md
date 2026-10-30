@@ -2,40 +2,62 @@
 
 Telegram-бот на Python. Администратор задаёт дату, окно доступного времени, цену часа и число автомобилей, которые могут одновременно находиться на треке. Пользователь выбирает время начала, количество часов, вводит госномер и подтверждает рассчитанную сумму. В общем расписании доступны оставшиеся места и участники.
 
-## Запуск в Windows
+Требуется **Python 3.10 или новее** и PostgreSQL. Ниже используется Python 3.12 и окружение `.venv-py312`. Все команды предназначены для Bash в Linux и выполняются в каталоге проекта, где лежит `requirements.txt`.
 
-Виртуальное окружение `.venv` уже создано. Команды ниже используют его Python напрямую.
+## Подготовка Python
 
-1. При необходимости установи зависимости:
+Перейди в каталог проекта. Для сервера с проектом в домашней папке:
 
-   ```powershell
-   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-   ```
+```bash
+cd ~/Malutkoracer_bot
+```
 
-2. Создай бота через [@BotFather](https://t.me/BotFather), команда `/newbot`.
-3. Открой `.env` в корне проекта и заполни `BOT_TOKEN` и `DATABASE_URL`. Если файла нет, скопируй `.env.example` в `.env`. Перед запуском бота запусти PostgreSQL по инструкции ниже.
-4. Запусти:
+Установи [uv](https://docs.astral.sh/uv/getting-started/installation/) и создай окружение на Python 3.12. Если этого Python ещё нет, uv скачает его автоматически:
 
-   ```powershell
-   .\.venv\Scripts\python.exe -m booking_bot
-   ```
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+~/.local/bin/uv venv --python 3.12 --seed .venv-py312
+.venv-py312/bin/python --version
+.venv-py312/bin/python -m pip install -r requirements.txt
+```
 
-5. Напиши боту `/id`. Добавь полученное число в `ADMIN_IDS` в `.env`. Несколько ID разделяются запятыми.
-6. Останови процесс сочетанием `Ctrl+C`, запусти снова и отправь `/admin`.
+Проверка версии должна показать `Python 3.12.x`. Во всех следующих командах используется `.venv-py312/bin/python`; активировать окружение отдельно не требуется.
 
-Для получения уведомлений каждому администратору нужно сначала открыть личный чат с ботом и отправить `/start`. Изменения `.env` применяются после перезапуска.
+## Настройка бота
+
+Создай бота через [@BotFather](https://t.me/BotFather), команда `/newbot`.
+
+Создай `.env`, если файла ещё нет:
+
+```bash
+if [ ! -f .env ]; then
+    cp .env.example .env
+fi
+```
+
+Открой `.env` в редакторе и заполни настройки:
+
+```dotenv
+BOT_TOKEN=токен_от_BotFather
+DATABASE_URL=postgresql://user:password@host:5432/database
+ADMIN_IDS=
+```
+
+В `DATABASE_URL` укажи пользователя, пароль, адрес, порт и имя базы PostgreSQL. Если Telegram ID администратора уже известен, заполни `ADMIN_IDS`; иначе его можно узнать после запуска через `/id`. Несколько ID разделяются запятыми. Изменения `.env` применяются после перезапуска бота.
 
 ## PostgreSQL
 
 Бот использует PostgreSQL через [Psycopg 3](https://www.psycopg.org/psycopg3/docs/). База должна существовать; таблицы и индексы создаются при запуске автоматически. Пользователю базы нужны права на создание таблиц в выбранной схеме.
 
-Для локального запуска с установленным Docker Desktop:
+Если PostgreSQL уже работает на сервере, используй его строку подключения в `.env`.
 
-```powershell
+Для отдельного локального экземпляра можно использовать `compose.yaml`. Понадобятся Docker Engine и плагин Docker Compose:
+
+```bash
 docker compose up -d --wait postgres
 ```
 
-В `.env` укажи:
+Для этого экземпляра в `.env` укажи:
 
 ```dotenv
 DATABASE_URL=postgresql://booking_bot:booking_bot@localhost:5432/booking_bot
@@ -43,13 +65,37 @@ DATABASE_URL=postgresql://booking_bot:booking_bot@localhost:5432/booking_bot
 
 Эти параметры совпадают с `compose.yaml`: PostgreSQL доступен на `localhost:5432`, данные хранятся в Docker volume `postgres_data` и сохраняются при `docker compose down`. Удаление volume удаляет базу. Для другой установки PostgreSQL укажи её пользователя, пароль, адрес и имя базы. Спецсимволы в имени пользователя и пароле URL нужно кодировать. При смене `POSTGRES_PASSWORD` или `POSTGRES_PORT` для Docker обнови и `DATABASE_URL`; пароль применяется при создании нового volume.
 
-Если данные уже были в SQLite, останови бота и выполни однократный перенос в пустую PostgreSQL:
+## Перенос из SQLite
 
-```powershell
-.\.venv\Scripts\python.exe -m booking_bot --migrate-sqlite data/bookings.sqlite3
+Если данные уже были в SQLite, останови бота и выполни однократный перенос в пустую PostgreSQL. Файл `data/bookings.sqlite3` должен находиться на Linux-сервере:
+
+```bash
+.venv-py312/bin/python -m booking_bot --migrate-sqlite data/bookings.sqlite3
 ```
 
 Переносятся все окна, активные и отменённые брони, ID, цены, вместимость, правила и ссылка на проезд. Для старых окон без поля вместимости сохраняется одно место. Перенос выполняется одной транзакцией; при ошибке записи откатываются. Повторный импорт в непустую базу отклоняется. Исходный файл SQLite остаётся без изменений. После переноса бот работает только с PostgreSQL; `DATABASE_PATH` больше не используется.
+
+Если прежних данных нет, переходи к запуску.
+
+## Проверка и запуск
+
+Проверь настройки и доступность PostgreSQL:
+
+```bash
+.venv-py312/bin/python -m booking_bot --check
+```
+
+При успешной проверке появится сообщение `Настройки и PostgreSQL: OK`. Затем запусти бота:
+
+```bash
+.venv-py312/bin/python -m booking_bot
+```
+
+Напиши боту `/id` и добавь полученное число в `ADMIN_IDS` в `.env`. Останови процесс сочетанием `Ctrl+C`, запусти снова и отправь `/admin`.
+
+Для получения уведомлений каждому администратору нужно сначала открыть личный чат с ботом и отправить `/start`.
+
+Процесс работает в текущем терминале. Для постоянной работы на сервере используй менеджер служб, например systemd. На один токен должен работать один процесс бота.
 
 ## Как открыть запись
 
@@ -123,20 +169,30 @@ DATABASE_URL=postgresql://booking_bot:booking_bot@localhost:5432/booking_bot
 | `BOOKING_DAYS` | На сколько дней вперёд администратор может открыть окно, по умолчанию 365 |
 | `MIN_NOTICE_MINUTES` | Минимальный запас времени до начала брони, по умолчанию 0 |
 
-Расписание и брони сохраняются в PostgreSQL. Для резервной копии используй `pg_dump`, для восстановления — `pg_restore`. `.env`, `.venv` и прежняя папка `data` исключены из Git через `.gitignore`. Токен и строку подключения вписывай в локальный `.env`.
+Расписание и брони сохраняются в PostgreSQL. Для резервной копии используй `pg_dump`, для восстановления — `pg_restore`. `.env`, `.venv-py312` и прежняя папка `data` исключены из Git через `.gitignore`. Токен и строку подключения вписывай в `.env` на сервере.
 
 Для работы боту нужен постоянно запущенный процесс с доступом к Telegram. Используется long polling: публичный сайт и webhook не требуются. На один токен запускается один процесс бота.
 
 ## Проверки без Telegram
 
-```powershell
-.\.venv\Scripts\python.exe -m booking_bot --check
-$env:TEST_DATABASE_URL = 'postgresql://booking_bot:booking_bot@localhost:5432/booking_bot'
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```bash
+.venv-py312/bin/python -m booking_bot --check
+export TEST_DATABASE_URL='postgresql://user:password@host:5432/database'
+.venv-py312/bin/python -m unittest discover -s tests -v
 ```
 
 `--check` проверяет настройки, подключение и создание таблиц без обращения к Telegram. Для интеграционных тестов нужен работающий PostgreSQL и явно заданный `TEST_DATABASE_URL`: каждый тест создаёт отдельную случайную схему и удаляет её после выполнения. Пользователю нужны права `CREATE` на базу. Таблицы рабочей схемы не изменяются. Без `TEST_DATABASE_URL` интеграционные тесты пропускаются; тесты настроек выполняются отдельно без PostgreSQL.
 
 Тесты подменяют отправку сообщений и проверяют расчёт суммы, большие Telegram ID и цены, лимит автомобилей и одновременные запросы, повторное подтверждение, отмену чужой брони, права администратора, перенос старой SQLite, остаток мест и публичный список участников, а также полный сценарий записи.
+
+## Ошибки установки
+
+**`No such file or directory` при запуске Python.** Перейди в каталог проекта и выполни команды из раздела «Подготовка Python». После создания окружения проверь путь:
+
+```bash
+.venv-py312/bin/python --version
+```
+
+**`No matching distribution found for python-telegram-bot==22.8`.** Проверь версию Python внутри окружения. Версия пакета `22.8` требует Python 3.10+; список доступных версий только до `21.6` может означать, что используется Python 3.8. Создай окружение на Python 3.12 по инструкции выше. Если Python уже подходит, проверь доступность нужных релизов в используемом индексе пакетов.
 
 Документация: [python-telegram-bot](https://docs.python-telegram-bot.org/en/stable/), [Telegram Bot API](https://core.telegram.org/bots/api).
