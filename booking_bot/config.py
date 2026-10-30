@@ -25,7 +25,7 @@ class Settings:
     track_name: str
     timezone: ZoneInfo
     admin_ids: frozenset[int]
-    database_path: Path
+    database_url: str = field(repr=False)
     max_booking_hours: int = 24
     booking_days: int = 365
     min_notice_minutes: int = 0
@@ -49,12 +49,12 @@ class Settings:
             raise ValueError("ADMIN_IDS: укажи числовые ID через запятую.") from None
         if any(user_id <= 0 for user_id in admin_ids):
             raise ValueError("ADMIN_IDS: нужны положительные ID пользователей.")
-        database_path = Path(os.getenv("DATABASE_PATH", "data/bookings.sqlite3"))
-        if not database_path.is_absolute():
-            database_path = ROOT / database_path
+        database_url = os.getenv("DATABASE_URL", "").strip()
+        if not database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("DATABASE_URL: укажи строку подключения postgresql://user:password@host:5432/database в .env.")
         return cls(
             token=token, track_name=track_name, timezone=timezone, admin_ids=admin_ids,
-            database_path=database_path,
+            database_url=database_url,
             max_booking_hours=_integer("MAX_BOOKING_HOURS", 24, 1, 24),
             booking_days=_integer("BOOKING_DAYS", 365, 1, 730),
             min_notice_minutes=_integer("MIN_NOTICE_MINUTES", 0, 0, 43_200),

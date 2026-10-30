@@ -3,6 +3,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 import re
 from typing import Callable
+from urllib.parse import urlsplit
 
 from .config import Settings
 from .storage import Availability, Booking, BookingError, BookingStore
@@ -29,6 +30,26 @@ def normalize_plate(value: str) -> str:
     if not re.fullmatch(r"[A-ZА-ЯЁ0-9]{4,16}", plate) or not any(char.isdigit() for char in plate):
         raise BookingError("Укажи госномер автомобиля, например А123ВС77. Допустимы буквы и цифры, от 4 до 16 символов.")
     return plate
+
+
+def normalize_map_url(value: str) -> str:
+    url = value.strip()
+    message = "Отправь ссылку из Яндекс Карт, например https://yandex.ru/maps/-/…"
+    if len(url) > 2048 or any(char.isspace() or ord(char) < 32 for char in url):
+        raise BookingError(message)
+    try:
+        parsed = urlsplit(url)
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        domains = {"yandex.ru", "yandex.com", "yandex.by", "yandex.kz", "yandex.uz", "yandex.com.tr", "yandex.com.ge", "ya.ru"}
+        is_map = ((host in domains and (parsed.path == "/maps" or parsed.path.startswith("/maps/")))
+                  or host in {f"maps.{domain}" for domain in domains})
+        valid = (parsed.scheme in {"http", "https"} and is_map and parsed.username is None
+                 and parsed.password is None and parsed.port in {None, 80, 443})
+    except ValueError:
+        valid = False
+    if not valid:
+        raise BookingError(message)
+    return url
 
 
 @dataclass(frozen=True)
