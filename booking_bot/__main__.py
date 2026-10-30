@@ -9,6 +9,7 @@ import psycopg
 from telegram.error import TelegramError
 
 from .config import Settings
+from .diagnostics import database_error_hint
 from .handlers import build_application
 from .migration import migrate_sqlite
 from .service import BookingService
@@ -34,7 +35,7 @@ def main() -> None:
             return
         store.initialize()
     except psycopg.Error as error:
-        parser.exit(1, f"Ошибка PostgreSQL ({type(error).__name__}). Проверь DATABASE_URL, доступность базы и права пользователя.\n")
+        parser.exit(1, f"Ошибка PostgreSQL ({type(error).__name__}). {database_error_hint(error)}\n")
     except (OSError, sqlite3.Error) as error:
         parser.exit(1, f"Не удалось прочитать SQLite ({type(error).__name__}). Проверь файл источника.\n")
     except ValueError as error:
