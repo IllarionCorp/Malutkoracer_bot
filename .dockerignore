@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!requirements.txt
+!booking_bot/
+!booking_bot/**
+**/__pycache__/
+**/*.py[cod]

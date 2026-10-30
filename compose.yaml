@@ -1,20 +1,11 @@
 services:
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_USER: booking_bot
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-booking_bot}
-      POSTGRES_DB: booking_bot
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U booking_bot -d booking_bot"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+  bot:
+    build: .
+    env_file:
+      - .env
+    # Linux: 127.0.0.1 points to PostgreSQL running on the host.
+    network_mode: host
+    init: true
+    stop_signal: SIGINT
+    stop_grace_period: 30s
     restart: unless-stopped
-
-volumes:
-  postgres_data:
